@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>班级信息检索系统</title>
+    <!-- 引入 Vue 3, Tailwind CSS, ECharts 的 CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        /* 手机端基础优化 */
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; -webkit-tap-highlight-color: transparent; }
+        [v-cloak] { display: none; }
+        /* 隐藏横向滚动条但保持可滚动 */
+        .scroll-x { overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+        .scroll-x::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body>
+<div id="app" v-cloak class="flex flex-col h-screen">
+
+    <!-- 手机端顶部导航 -->
+    <header class="bg-blue-600 text-white p-3 flex items-center justify-between shadow-md z-10">
+        <h1 class="text-base font-bold truncate">班级信息检索</h1>
+        <div class="flex items-center gap-2">
+            <button @click="showFilter = !showFilter" class="bg-blue-700 px-2 py-1 rounded text-xs">
+                {{ showFilter ? '收起筛选' : '筛选标签' }}
+            </button>
+            <button @click="isUnlocked = !isUnlocked" :class="isUnlocked ? 'bg-green-500' : 'bg-red-500'" class="px-2 py-1 rounded text-xs font-bold">
+                {{ isUnlocked ? '🔓 解锁' : '🔒 加密' }}
+            </button>
+        </div>
+    </header>
+
+    <!-- 全局搜索 -->
+    <div class="bg-white p-2 border-b border-gray-200">
+        <input v-model="searchQuery" type="text" placeholder="搜索姓名/学号/手机号/宿舍..." class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="flex flex-1 overflow-hidden relative">
+        
+        <!-- 左侧/顶部 筛选抽屉（手机端默认收起） -->
+        <aside v-show="showFilter" class="absolute inset-y-0 left-0 w-64 bg-white border-r border-gray-200 z-20 shadow-2xl flex flex-col transform transition-transform duration-300">
+            <div class="p-3 border-b flex justify-between items-center bg-gray-50">
+                <span class="font-bold text-sm text-gray-700">标签筛选树</span>
+                <button @click="clearFilters" class="text-xs text-blue-600">清空</button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-3 space-y-4 text-sm">
+                <!-- 性别 -->
+                <div>
+                    <div class="font-semibold text-gray-600 mb-1">性别</div>
+                    <label class="flex items-center gap-2 mb-1" v-for="g in ['男', '女']" :key="g">
+                        <input type="checkbox" v-model="filters.gender" :value="g" class="rounded text-blue-600">
+                        <span>{{ g }}</span>
+                    </label>
+                </div>
+                <!-- 政治面貌 -->
+                <div>
+                    <div class="font-semibold text-gray-600 mb-1">政治面貌</div>
+                    <label class="flex items-center gap-2 mb-1" v-for="p in politicsList" :key="p">
+                        <input type="checkbox" v-model="filters.politics" :value="p" class="rounded text-blue-600">
+                        <span>{{ p }}</span>
+                    </label>
+                </div>
+                <!-- 职务 -->
+                <div>
+                    <div class="font-semibold text-gray-600 mb-1">担任职务</div>
+                    <label class="flex items-center gap-2 mb-1" v-for="r in roleList" :key="r">
+                        <input type="checkbox" v-model="filters.role" :value="r" class="rounded text-blue-600">
+                        <span>{{ r }}</span>
+                    </label>
+                </div>
+                <!-- 宿舍楼 -->
+                <div>
+                    <div class="font-semibold text-gray-600 mb-1">宿舍楼</div>
+                    <label class="flex items-center gap-2 mb-1" v-for="b in buildingList" :key="b">
+                        <input type="checkbox" v-model="filters.building" :value="b" class="rounded text-blue-600">
+                        <span>{{ b }}</span>
+                    </label>
+                </div>
+            </div>
+            <!-- 筛选结果及复制按钮 -->
+            <div class="p-3 border-t bg-gray-50">
+                <div class="text-xs text-gray-500 mb-2 text-center">筛选出 {{ filteredData.length }} 人</div>
+                <button @click="copyFilteredData" class="w-full bg-blue-600 text-white py-2 rounded text-sm font-bold shadow">📋 复制当前筛选数据</button>
+            </div>
+        </aside>
+
+        <!-- 右侧主视图 -->
+        <main class="flex-1 flex flex-col bg-gray-50 overflow-hidden">
+            <!-- 视图切换 -->
+            <div class="flex bg-white border-b overflow-x-auto scroll-x p-1 gap-1">
+                <button v-for="view in views" :key="view.id" @click="currentView = view.id" 
+                        :class="['px-3 py-1.5 text-xs rounded whitespace-nowrap', currentView === view.id ? 'bg-blue-100 text-blue-700 font-bold' : 'text-gray-600']">
+                    {{ view.name }}
+                </button>
+            </div>
+
+            <!-- 表格视图 (手机上水平滑动) -->
+            <div v-if="currentView === 'table'" class="flex-1 overflow-auto p-2">
+                <div class="bg-white rounded shadow overflow-x-auto scroll-x">
+                    <table class="w-full text-xs text-left whitespace-nowrap">
+                        <thead class="bg-gray-100 text-gray-600 sticky top-0">
+                            <tr>
+                                <th class="p-2">学号</th><th class="p-2">姓名</th><th class="p-2">性别</th>
+                                <th class="p-2">手机号</th><th class="p-2">宿舍</th><th class="p-2">职务</th><th class="p-2">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="s in filteredData" :key="s.id" class="border-b">
+                                <td class="p-2 text-gray-500">{{ s.id }}</td>
+                                <td class="p-2 font-medium">{{ s.name }}</td>
+                                <td class="p-2">{{ s.gender }}</td>
+                                <td class="p-2">{{ isUnlocked ? s.phone : '****' }}</td>
+                                <td class="p-2"><span class="bg-gray-100 px-1 rounded">{{ s.building }} {{ s.dorm }}</span></td>
+                                <td class="p-2">
+                                    <span v-for="r in s.roles" :key="r" class="bg-blue-50 text-blue-600 px-1 rounded text-[10px] mr-1">{{ r }}</span>
+                                    <span v-if="s.isRoomLeader" class="bg-purple-50 text-purple-600 px-1 rounded text-[10px]">寝室长</span>
+                                </td>
+                                <td class="p-2">
+                                    <button @click="copySingle(s)" class="text-blue-600 border border-blue-300 px-2 py-0.5 rounded text-[10px]">复制</button>
+                                </td>
+                            </tr>
+                            <tr v-if="filteredData.length === 0">
+                                <td colspan="7" class="text-center p-4 text-gray-400">暂无数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 图表视图 -->
+            <div v-show="currentView !== 'table'" class="flex-1 flex flex-col relative overflow-hidden">
+                <div ref="chartRef" class="flex-1 w-full h-full"></div>
+                <!-- 手机端图表详情弹窗 -->
+                <div v-if="selectedStudent" class="absolute bottom-0 left-0 right-0 bg-white border-t-2 border-blue-500 p-3 shadow-2xl max-h-48 overflow-y-auto z-30">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="font-bold">{{ selectedStudent.name }}</span>
+                        <button @click="selectedStudent = null" class="text-gray-400 text-lg">✕</button>
+                    </div>
+                    <div class="text-xs space-y-1 text-gray-600">
+                        <p>学号：{{ selectedStudent.id }} | 性别：{{ selectedStudent.gender }}</p>
+                        <p>手机：{{ isUnlocked ? selectedStudent.phone : '***********' }}</p>
+                        <p>宿舍：{{ selectedStudent.building }} {{ selectedStudent.dorm }} | 面貌：{{ selectedStudent.politics }}</p>
+                        <p>职务：{{ selectedStudent.roles.join('、') }}{{ selectedStudent.isRoomLeader ? '、寝室长' : '' }}</p>
+                    </div>
+                    <button @click="copySingle(selectedStudent)" class="mt-2 w-full bg-blue-50 text-blue-700 py-1 rounded text-xs">复制此人信息</button>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<script>
+const { createApp, ref, computed, watch, nextTick } = Vue;
+
+// 数据源
+const rawData = [
+    { id: '2126080101', name: '曹涵菲', gender: '男', phone: '15839019277', building: 'A6', dorm: '350', politics: '共青团员', roles: ['组织委员'], isRoomLeader: false },
+    { id: '2126080102', name: '陈佳琪', gender: '女', phone: '17839393439', building: 'A8', dorm: '235', politics: '共青团员', roles: [], isRoomLeader: false },
+    { id: '2126080103', name: '樊仕成', gender: '男', phone: '19211730063', building: 'A6', dorm: '338', politics: '群众', roles: ['卫生委员'], isRoomLeader: false },
+    { id: '2126080104', name: '高艺菲', gender: '女', phone: '15713661089', building: 'A8', dorm: '236', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080105', name: '高艺婷', gender: '女', phone: '18737788795', building: 'A8', dorm: '235', politics: '共青团员', roles: [], isRoomLeader: false },
+    { id: '2126080106', name: '郭永康', gender: '男', phone: '19561673869', building: 'A6', dorm: '339', politics: '群众', roles: ['副班长'], isRoomLeader: false },
+    { id: '2126080107', name: '韩正声', gender: '男', phone: '18203709816', building: 'A6', dorm: '338', politics: '群众', roles: [], isRoomLeader: true },
+    { id: '2126080108', name: '郝佳乐', gender: '男', phone: '15703840622', building: 'A6', dorm: '338', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080109', name: '何思源', gender: '男', phone: '17734728596', building: 'A6', dorm: '338', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080110', name: '李奥军', gender: '男', phone: '15518473288', building: 'A8', dorm: '235', politics: '群众', roles: [], isRoomLeader: true },
+    { id: '2126080111', name: '李升玑', gender: '女', phone: '17796778328', building: 'A8', dorm: '236', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080112', name: '李镇圳', gender: '男', phone: '13783020547', building: 'A6', dorm: '565', politics: '群众', roles: ['班长', '安全委员'], isRoomLeader: true },
+    { id: '2126080113', name: '李紫菡', gender: '女', phone: '15556993995', building: 'A8', dorm: '235', politics: '共青团员', roles: [], isRoomLeader: false },
+    { id: '2126080114', name: '刘宏杰', gender: '男', phone: '18211755080', building: 'A6', dorm: '350', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080115', name: '刘思莹', gender: '女', phone: '18739803726', building: 'A8', dorm: '236', politics: '共青团员', roles: ['心理委员'], isRoomLeader: false },
+    { id: '2126080116', name: '刘真', gender: '女', phone: '19838497560', building: 'A8', dorm: '235', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080117', name: '鲁文轩', gender: '男', phone: '15639147336', building: 'A6', dorm: '339', politics: '共青团员', roles: ['团支书', '安全委员'], isRoomLeader: false },
+    { id: '2126080118', name: '马子曼', gender: '女', phone: '17613710967', building: 'A8', dorm: '235', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080119', name: '梅书睿', gender: '男', phone: '13592663182', building: 'A6', dorm: '565', politics: '群众', roles: ['生活委员'], isRoomLeader: false },
+    { id: '2126080120', name: '倪永浩', gender: '男', phone: '17698759246', building: 'A6', dorm: '350', politics: '共青团员', roles: ['文体委员'], isRoomLeader: false },
+    { id: '2126080121', name: '田世杰', gender: '男', phone: '19337788659', building: 'A6', dorm: '350', politics: '共青团员', roles: [], isRoomLeader: false },
+    { id: '2126080122', name: '田益', gender: '男', phone: '18938657248', building: 'A6', dorm: '565', politics: '共青团员', roles: [], isRoomLeader: true },
+    { id: '2126080123', name: '王梦如', gender: '女', phone: '19703709315', building: 'A8', dorm: '208', politics: '群众', roles: [], isRoomLeader: true },
+    { id: '2126080124', name: '王帅磊', gender: '男', phone: '13783749131', building: 'A6', dorm: '338', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080125', name: '徐涛', gender: '男', phone: '19837683781', building: 'A6', dorm: '339', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080126', name: '杨巧燕', gender: '女', phone: '18737685512', building: 'A8', dorm: '236', politics: '群众', roles: ['班长'], isRoomLeader: false },
+    { id: '2126080127', name: '袁鹏涛', gender: '男', phone: '18638496675', building: 'A6', dorm: '350', politics: '群众', roles: [], isRoomLeader: true },
+    { id: '2126080128', name: '张驰', gender: '男', phone: '15936905941', building: 'A6', dorm: '338', politics: '群众', roles: [], isRoomLeader: false },
+    { id: '2126080129', name: '张皓杰', gender: '男', phone: '19503725900', building: 'A6', dorm: '339', politics: '共青团员', roles: ['纪律委员'], isRoomLeader: false },
+    { id: '2126080130', name: '张宇翔', gender: '男', phone: '18436004237', building: 'A6', dorm: '339', politics: '群众', roles: ['学习委员'], isRoomLeader: false },
+    { id: '2126080131', name: '赵舒畅', gender: '女', phone: '13037570011', building: 'A8', dorm: '236', politics: '共青团员', roles: [], isRoomLeader: false },
+    { id: '2126080132', name: '周新普', gender: '男', phone: '18739377956', building: 'A6', dorm: '339', politics: '共青团员', roles: [], isRoomLeader: false },
+    { id: '2126080133', name: '周怡诺', gender: '女', phone: '15139028785', building: 'A8', dorm: '236', politics: '群众', roles: ['宣传委员'], isRoomLeader: false },
+    { id: '2126080134', name: '朱彬', gender: '男', phone: '19103806959', building: 'A6', dorm: '350', politics: '群众', roles: [], isRoomLeader: false }
+];
+
+createApp({
+    setup() {
+        const searchQuery = ref('');
+        const isUnlocked = ref(false);
+        const currentView = ref('table');
+        const selectedStudent = ref(null);
+        const showFilter = ref(false); // 手机端筛选面板默认收起
+        const chartRef = ref(null);
+        let chartInstance = null;
+
+        const views = [
+            { id: 'table', name: '数据表' },
+            { id: 'network', name: '网状图' },
+            { id: 'orgTree', name: '职位树' },
+            { id: 'dormTree', name: '寝室树' }
+        ];
+
+        const filters = ref({ gender: [], politics: [], role: [], building: [] });
+        const roleList = [...new Set(rawData.flatMap(s => [...s.roles, ...(s.isRoomLeader ? ['寝室长'] : [])]))].sort();
+        const politicsList = [...new Set(rawData.map(s => s.politics))];
+        const buildingList = [...new Set(rawData.map(s => s.building))].sort();
+
+        const clearFilters = () => {
+            filters.value = { gender: [], politics: [], role: [], building: [] };
+            searchQuery.value = '';
+        };
+
+        const filteredData = computed(() => {
+            return rawData.filter(s => {
+                if (searchQuery.value) {
+                    const q = searchQuery.value.toLowerCase();
+                    const match = s.name.includes(q) || s.id.includes(q) || s.phone.includes(q) || (s.building + s.dorm).toLowerCase().includes(q) || s.roles.join(',').includes(q);
+                    if (!match) return false;
+                }
+                if (filters.value.gender.length && !filters.value.gender.includes(s.gender)) return false;
+                if (filters.value.politics.length && !filters.value.politics.includes(s.politics)) return false;
+                if (filters.value.building.length && !filters.value.building.includes(s.building)) return false;
+                if (filters.value.role.length) {
+                    const sRoles = [...s.roles, ...(s.isRoomLeader ? ['寝室长'] : [])];
+                    if (!filters.value.role.some(r => sRoles.includes(r))) return false;
+                }
+                return true;
+            });
+        });
+
+        // 复制兼容手机方法
+        const copyToClipboard = (text) => {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => alert('✅ 已复制！可直接粘贴')).catch(() => fallbackCopy(text));
+            } else {
+                fallbackCopy(text);
+            }
+        };
+        const fallbackCopy = (text) => {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try { document.execCommand('copy'); alert('✅ 已复制！可直接粘贴'); } catch (err) { alert('请长按选中复制'); }
+            document.body.removeChild(textArea);
+        };
+
+        const copyFilteredData = () => {
+            if (!filteredData.value.length) return alert('无数据');
+            let headers = "学号\t姓名\t性别\t手机号\t宿舍\t政治面貌\t职务\n";
+            let rows = filteredData.value.map(s => {
+                const phone = isUnlocked.value ? s.phone : '***********';
+                const roles = [...s.roles, ...(s.isRoomLeader ? ['寝室长'] : [])].join('、') || '无';
+                return `${s.id}\t${s.name}\t${s.gender}\t${phone}\t${s.building} ${s.dorm}\t${s.politics}\t${roles}`;
+            }).join('\n');
+            copyToClipboard(headers + rows);
+        };
+
+        const copySingle = (s) => {
+            const phone = isUnlocked.value ? s.phone : '***********';
+            const roles = [...s.roles, ...(s.isRoomLeader ? ['寝室长'] : [])].join('、') || '无';
+            copyToClipboard(`姓名：${s.name}\n学号：${s.id}\n性别：${s.gender}\n手机号：${phone}\n宿舍：${s.building} ${s.dorm}\n政治面貌：${s.politics}\n职务：${roles}`);
+        };
+
+        const renderChart = () => {
+            if (!chartRef.value) return;
+            if (!chartInstance) chartInstance = echarts.init(chartRef.value);
+            let option = {};
+
+            if (currentView.value === 'network') {
+                const nodes = filteredData.value.map(s => ({ id: s.id, name: s.name, symbolSize: 25, itemStyle: { color: s.gender === '男' ? '#3b82f6' : '#ec4899' } }));
+                const links = [];
+                for (let i = 0; i < filteredData.value.length; i++) {
+                    for (let j = i + 1; j < filteredData.value.length; j++) {
+                        const s1 = filteredData.value[i], s2 = filteredData.value[j];
+                        if (s1.building === s2.building && s1.dorm === s2.dorm) links.push({ source: s1.id, target: s2.id });
+                    }
+                }
+                option = { tooltip: {}, series: [{ type: 'graph', layout: 'force', data: nodes, links: links, roam: true, label: { show: true, fontSize: 10 }, force: { repulsion: 300 } }] };
+            } else if (currentView.value === 'orgTree') {
+                const root = { name: '班级', children: [] };
+                const roleMap = {};
+                filteredData.value.forEach(s => {
+                    s.roles.forEach(r => { if (!roleMap[r]) roleMap[r] = []; roleMap[r].push({ name: s.name, value: s.id }); });
+                    if (s.isRoomLeader) { if (!roleMap['寝室长']) roleMap['寝室长'] = []; roleMap['寝室长'].push({ name: s.name, value: s.id }); }
+                });
+                for (const [role, students] of Object.entries(roleMap)) { if (students.length) root.children.push({ name: role, children: students }); }
+                option = { tooltip: { trigger: 'item' }, series: [{ type: 'tree', data: [root], top: '5%', left: '5%', bottom: '5%', right: '5%', symbolSize: 8, label: { position: 'left', fontSize: 10 }, leaves: { label: { position: 'right' } } }] };
+            } else if (currentView.value === 'dormTree') {
+                const root = { name: '宿舍楼', children: [] };
+                const bMap = {};
+                filteredData.value.forEach(s => {
+                    if (!bMap[s.building]) bMap[s.building] = {};
+                    if (!bMap[s.building][s.dorm]) bMap[s.building][s.dorm] = [];
+                    bMap[s.building][s.dorm].push({ name: s.name + (s.isRoomLeader ? '(寝室长)' : ''), value: s.id });
+                });
+                for (const [b, dorms] of Object.entries(bMap)) {
+                    const bNode = { name: b, children: [] };
+                    for (const [d, stus] of Object.entries(dorms)) bNode.children.push({ name: d + '宿舍', children: stus });
+                    root.children.push(bNode);
+                }
+                option = { tooltip: { trigger: 'item' }, series: [{ type: 'tree', data: [root], top: '5%', left: '5%', bottom: '5%', right: '5%', symbolSize: 8, label: { position: 'left', fontSize: 10 }, leaves: { label: { position: 'right' } } }] };
+            }
+            chartInstance.setOption(option, true);
+            
+            chartInstance.off('click');
+            chartInstance.on('click', (params) => {
+                if (params.data && params.data.value) {
+                    const stu = rawData.find(s => s.id === params.data.value);
+                    if (stu) selectedStudent.value = stu;
+                }
+            });
+            chartInstance.resize(); // 手机端图表自适应
+        };
+
+        watch([currentView, filteredData], () => {
+            nextTick(() => {
+                if (currentView.value !== 'table') renderChart();
+            });
+        });
+
+        return { searchQuery, isUnlocked, currentView, selectedStudent, showFilter, chartRef, views, filters, roleList, politicsList, buildingList, filteredData, clearFilters, copyFilteredData, copySingle };
+    }
+}).mount('#app');
+</script>
+</body>
+</html>
